@@ -107,6 +107,18 @@ conda run -n gymnas-rl python scripts/shadowhand_train_sac_her.py \
   --timesteps 1000000 \
   --device cuda \
   --run-name block_rotatez_sac_her
+
+python scripts/shadowhand_train_sac_her.py \
+  --env-id HandManipulateBlockRotateZ-v1 \
+  --timesteps 4000000 \
+  --batch-size 1024 \
+  --buffer-size 1000000 \
+  --learning-starts 10000 \
+  --n-sampled-goal 8 \
+  --eval-freq 50000 \
+  --save-freq 200000 \
+  --device cuda \
+  --run-name block_rotatez_sac_her_4m_bs1024_her8
 ```
 
 训练产物：
