@@ -102,7 +102,7 @@ def check_env(env_id: str, seed: int) -> None:
     print("action_space:", env.action_space)
     print("obs_shapes:", {key: value.shape for key, value in obs.items()})
     print("step:", reward, terminated, truncated, info)
-    print("frame:", frame.shape, frame.dtype, int(frame.min()), int(frame.max()))
+    # print("frame:", frame.shape, frame.dtype, int(frame.min()), int(frame.max()))
     env.close()
 
 

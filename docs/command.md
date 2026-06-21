@@ -161,8 +161,8 @@ conda run -n gymnas-rl python scripts/shadowhand_play.py \
 ```bash
 conda run -n gymnas-rl python scripts/shadowhand_play.py \
   --env-id HandManipulateBlockRotateZ-v1 \
-  --model-path runs/models/block_rotatez_sac_her/final_model.zip \
-  --episodes 3 \
+  --model-path runs/models/block_rotatez_sac_her_4m_bs1024_her8/final_model.zip \
+  --episodes 16 \
   --human \
   --device cuda
 ```
