@@ -1,0 +1,24 @@
+{
+  "env": {
+    "env_id": "HandManipulateBlockRotateZ-v1",
+    "kwargs": {}
+  },
+  "train": {
+    "algo": "sac",
+    "use_her": true,
+    "timesteps": 4000000,
+    "batch_size": 1024,
+    "buffer_size": 1000000,
+    "learning_starts": 10000,
+    "n_sampled_goal": 8,
+    "eval_freq": 50000,
+    "save_freq": 200000,
+    "device": "cuda",
+    "run_name": "block_rotatez_sac_her_4m_bs1024_her8_parallel"
+  },
+  "parallel": {
+    "num_envs": 8,
+    "eval_num_envs": 1,
+    "vec_env": "subproc"
+  }
+}

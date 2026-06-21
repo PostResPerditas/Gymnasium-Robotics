@@ -1,0 +1,58 @@
+{
+  "env": {
+    "env_id": "HandManipulateBlockRotateZ-v1",
+    "kwargs": {}
+  },
+  "reward": {
+    "mode": "isaac",
+    "kwargs": {
+      "dist_reward_scale": -10.0,
+      "rot_reward_scale": 1.0,
+      "rot_eps": 0.1,
+      "action_penalty_scale": -0.0002,
+      "reach_goal_bonus": 250.0,
+      "fall_distance": 0.24,
+      "fall_penalty": 0.0,
+      "success_tolerance": 0.1,
+      "reward_scale": 0.01
+    }
+  },
+  "train": {
+    "algo": "ppo",
+    "use_her": false,
+    "timesteps": 10000000,
+    "batch_size": 8192,
+    "learning_rate": 0.0005,
+    "gamma": 0.99,
+    "n_steps": 512,
+    "n_epochs": 5,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "vf_coef": 4.0,
+    "max_grad_norm": 1.0,
+    "eval_freq": 100000,
+    "save_freq": 500000,
+    "device": "cuda",
+    "run_name": "block_rotatez_ppo_isaac_shaped_parallel",
+    "policy_kwargs": {
+      "activation_fn": "elu",
+      "net_arch": {
+        "pi": [512, 512, 256, 128],
+        "vf": [512, 512, 256, 128]
+      }
+    }
+  },
+  "normalization": {
+    "vec_normalize": true,
+    "norm_obs": true,
+    "norm_reward": false,
+    "norm_clip_obs": 5.0,
+    "norm_clip_reward": 10.0
+  },
+  "parallel": {
+    "num_envs": 32,
+    "eval_num_envs": 1,
+    "vec_env": "subproc"
+  }
+}

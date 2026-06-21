@@ -1,4 +1,4 @@
-"""Play, evaluate, and record a ShadowHand manipulation policy."""
+"""Play and record ShadowHand shaped PPO policies with VecNormalize support."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 import gymnasium as gym
 import imageio.v2 as imageio
+import numpy as np
 
 
 SUPPORTED_ALGOS = {"ddpg", "ppo", "sac", "td3"}
@@ -17,7 +18,10 @@ DEFAULT_ENV_ID = "HandManipulateBlockRotateZ-v1"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Visualize a trained ShadowHand policy or a random rollout."
+        description=(
+            "Visualize a trained ShadowHand shaped PPO policy or a random rollout, "
+            "including reward wrapper and VecNormalize restoration."
+        )
     )
     parser.add_argument(
         "--env-id",
@@ -47,6 +51,22 @@ def parse_args() -> argparse.Namespace:
         "--env-kwargs-json",
         default=None,
         help="JSON object passed to gym.make, overriding env_kwargs from config.",
+    )
+    parser.add_argument(
+        "--reward-mode",
+        choices=("env", "isaac"),
+        default=None,
+        help="Reward wrapper override. Defaults to reward_mode from config.",
+    )
+    parser.add_argument(
+        "--reward-kwargs-json",
+        default=None,
+        help="JSON object passed to the reward wrapper.",
+    )
+    parser.add_argument(
+        "--vecnormalize-path",
+        default=None,
+        help="Path to SB3 VecNormalize stats. Defaults to config vecnormalize_path or model directory.",
     )
     parser.add_argument("--episodes", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
@@ -98,6 +118,17 @@ def resolve_env_config(
     return env_id, env_kwargs
 
 
+def resolve_reward_config(
+    args: argparse.Namespace,
+    training_config: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    reward_mode = args.reward_mode or str(training_config.get("reward_mode") or "env")
+    reward_kwargs = dict(training_config.get("reward_kwargs") or {})
+    if args.reward_kwargs_json:
+        reward_kwargs = load_json_object(args.reward_kwargs_json, "--reward-kwargs-json")
+    return reward_mode, reward_kwargs
+
+
 def resolve_algo(args: argparse.Namespace, training_config: Mapping[str, Any]) -> str:
     if args.algo != "auto":
         return args.algo
@@ -113,6 +144,40 @@ def resolve_algo(args: argparse.Namespace, training_config: Mapping[str, Any]) -
     if algo not in SUPPORTED_ALGOS:
         raise SystemExit(f"Unsupported algo in config: {algo!r}.")
     return algo
+
+
+def resolve_vecnormalize_path(
+    args: argparse.Namespace,
+    training_config: Mapping[str, Any],
+) -> Path | None:
+    if args.vecnormalize_path:
+        path = Path(args.vecnormalize_path).expanduser()
+        return path if path.exists() else None
+
+    config_path = training_config.get("vecnormalize_path")
+    if config_path:
+        path = Path(str(config_path)).expanduser()
+        if path.exists():
+            return path
+
+    if args.model_path:
+        path = Path(args.model_path).expanduser().parent / "vecnormalize.pkl"
+        if path.exists():
+            return path
+    return None
+
+
+def make_raw_env(
+    env_id: str,
+    env_kwargs: Mapping[str, Any],
+    reward_mode: str,
+    reward_kwargs: Mapping[str, Any],
+    render_mode: str | None,
+) -> gym.Env:
+    from shadowhand_wrappers import apply_shadowhand_reward_wrapper
+
+    env = gym.make(env_id, render_mode=render_mode, **dict(env_kwargs))
+    return apply_shadowhand_reward_wrapper(env, reward_mode, dict(reward_kwargs))
 
 
 def load_model(model_path: str, algo: str, env: gym.Env, device: str) -> Any:
@@ -152,18 +217,42 @@ def main() -> None:
     gym.register_envs(gymnasium_robotics)
     training_config = load_training_config(args)
     env_id, env_kwargs = resolve_env_config(args, training_config)
+    reward_mode, reward_kwargs = resolve_reward_config(args, training_config)
+    vecnormalize_path = resolve_vecnormalize_path(args, training_config)
 
     render_mode = "human" if args.human else ("rgb_array" if args.video_dir else None)
     spec = gym.spec(env_id)
     max_steps = args.max_steps or getattr(spec, "max_episode_steps", 0) or 1_000
 
-    env = gym.make(env_id, render_mode=render_mode, **env_kwargs)
+    if vecnormalize_path:
+        from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+
+        env = DummyVecEnv(
+            [
+                lambda: make_raw_env(
+                    env_id,
+                    env_kwargs,
+                    reward_mode,
+                    reward_kwargs,
+                    render_mode,
+                )
+            ]
+        )
+        env = VecNormalize.load(str(vecnormalize_path), env)
+        env.training = False
+        env.norm_reward = False
+        vectorized_env = True
+        print("vecnormalize:", vecnormalize_path.resolve())
+    else:
+        env = make_raw_env(env_id, env_kwargs, reward_mode, reward_kwargs, render_mode)
+        vectorized_env = False
 
     if args.model_path:
         algo = resolve_algo(args, training_config)
         print("algo:", algo.upper())
         print("model:", Path(args.model_path).expanduser().resolve())
         print("env_id:", env_id)
+        print("reward_mode:", reward_mode)
         model = load_model(args.model_path, algo, env, args.device)
     else:
         model = None
@@ -171,7 +260,11 @@ def main() -> None:
     successes = []
     try:
         for episode in range(args.episodes):
-            obs, _ = env.reset(seed=args.seed + episode)
+            if vectorized_env:
+                env.seed(args.seed + episode)
+                obs = env.reset()
+            else:
+                obs, _ = env.reset(seed=args.seed + episode)
             frames = []
             total_reward = 0.0
             last_info = {}
@@ -183,15 +276,24 @@ def main() -> None:
 
             for step in range(max_steps):
                 if model is None:
-                    action = env.action_space.sample()
+                    if vectorized_env:
+                        action = np.asarray([env.action_space.sample()])
+                    else:
+                        action = env.action_space.sample()
                 else:
                     action, _ = model.predict(
                         obs, deterministic=not args.stochastic
                     )
 
-                obs, reward, terminated, truncated, last_info = env.step(action)
-                total_reward += float(reward)
-                done = terminated or truncated
+                if vectorized_env:
+                    obs, rewards, dones, infos = env.step(action)
+                    total_reward += float(rewards[0])
+                    last_info = infos[0]
+                    done = bool(dones[0])
+                else:
+                    obs, reward, terminated, truncated, last_info = env.step(action)
+                    total_reward += float(reward)
+                    done = terminated or truncated
 
                 if args.video_dir:
                     frame = env.render()

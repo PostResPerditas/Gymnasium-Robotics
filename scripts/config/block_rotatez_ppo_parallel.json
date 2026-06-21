@@ -1,0 +1,27 @@
+{
+  "env": {
+    "env_id": "HandManipulateBlockRotateZ-v1",
+    "kwargs": {}
+  },
+  "train": {
+    "algo": "ppo",
+    "use_her": false,
+    "timesteps": 4000000,
+    "batch_size": 2048,
+    "learning_rate": 0.0003,
+    "gamma": 0.95,
+    "n_steps": 2048,
+    "n_epochs": 10,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "eval_freq": 50000,
+    "save_freq": 200000,
+    "device": "cuda",
+    "run_name": "block_rotatez_ppo_4m_parallel"
+  },
+  "parallel": {
+    "num_envs": 8,
+    "eval_num_envs": 1,
+    "vec_env": "subproc"
+  }
+}

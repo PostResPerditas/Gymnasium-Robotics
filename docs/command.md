@@ -97,7 +97,7 @@ conda run -n gymnas-rl pip install "stable-baselines3[extra]"
 conda run -n gymnas-rl python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
 ```
 
-## SAC + HER 训练
+## SB3 训练：SAC/HER、PPO 和并行环境
 
 先从 `RotateZ` 训练，默认脚本会把 SB3 的 device 设为 `cuda`：
 
@@ -120,6 +120,74 @@ python scripts/shadowhand_train_sac_her.py \
   --device cuda \
   --run-name block_rotatez_sac_her_4m_bs1024_her8
 ```
+
+现在训练脚本也支持从 `scripts/config` 读取配置，并在迁移到另一台主机时用 `--output-root` 指定完整导出根目录：
+
+```bash
+conda run -n gymnas-rl python scripts/shadowhand_train_sac_her.py \
+  --config block_rotatez_sac_her_4m_parallel.json \
+  --output-root /data/runs/gymnasium-robotics/shadowhand
+```
+
+等价地，也可以直接在命令行指定算法和并行环境：
+
+```bash
+conda run -n gymnas-rl python scripts/shadowhand_train_sac_her.py \
+  --algo sac \
+  --use-her \
+  --env-id HandManipulateBlockRotateZ-v1 \
+  --timesteps 4000000 \
+  --batch-size 1024 \
+  --buffer-size 1000000 \
+  --learning-starts 10000 \
+  --n-sampled-goal 8 \
+  --num-envs 8 \
+  --vec-env subproc \
+  --eval-freq 50000 \
+  --save-freq 200000 \
+  --device cuda \
+  --output-root /data/runs/gymnasium-robotics/shadowhand \
+  --run-name block_rotatez_sac_her_4m_bs1024_her8_parallel
+```
+
+PPO 示例配置：
+
+```bash
+python scripts/shadowhand_train_sac_her.py \
+  --config block_rotatez_ppo_parallel.json \
+  --output-root /data/runs/gymnasium-robotics/shadowhand
+```
+
+更适合 PPO 的 shaped-reward 配置已经拆到独立入口，避免影响通用 SAC/HER/PPO 脚本：
+
+```bash
+python scripts/shadowhand_train_ppo_isaac_shaped.py \
+  --config block_rotatez_ppo_isaac_shaped_parallel.json \
+  --output-root /mnt/ssd/Bennkyou/PROJECT/data_PRO/runs/Gymnasium-Robotics/shadowhand
+  --output-root /data/runs/gymnasium-robotics/shadowhand
+```
+
+这个入口由 `scripts/shadowhand_train_ppo_isaac_shaped.py`、`scripts/shadowhand_wrappers.py` 和 `scripts/config/block_rotatez_ppo_isaac_shaped_parallel.json` 组成。它尽量贴近 IsaacGymEnvs 的 ShadowHand PPO 思路：使用手写 shaped reward、`gamma=0.99`、`learning_rate=5e-4`、`vf_coef=4.0`、ELU 大网络、observation normalization 和更大的并行采样数。注意 Gymnasium-Robotics 这里仍然是 MuJoCo CPU 物理仿真，不能像 IsaacGym 一样使用 16384 个 GPU 物理环境；`num_envs=32` 是多进程 CPU 采样起点，可以按机器 CPU 核数覆盖，例如：
+
+```bash
+python scripts/shadowhand_train_ppo_isaac_shaped.py \
+  --config block_rotatez_ppo_isaac_shaped_parallel.json \
+  --num-envs 64 \
+  --output-root /mnt/ssd/Bennkyou/PROJECT/data_PRO/runs/Gymnasium-Robotics/shadowhand
+```
+
+说明：
+
+- `--algo` 可选 `sac`、`td3`、`ddpg`、`ppo`。
+- `sac`、`td3`、`ddpg` 支持 `--use-her`；`ppo` 是 on-policy 算法，不能使用 HER replay buffer。
+- `--reward-mode isaac` 和 `--vec-normalize` 只在 `scripts/shadowhand_train_ppo_isaac_shaped.py` 这条实验入口中使用；通用 `scripts/shadowhand_train_sac_her.py` 不加载 shaped reward。
+- `--reward-mode isaac` 会用 `goal distance + rotation reward + action penalty + success bonus` 替换环境原始 sparse reward。
+- `--vec-normalize` 会保存 `vecnormalize.pkl` 到模型目录；实验可视化脚本会自动读取它。
+- `--config` 可以传完整路径，也可以只传 `scripts/config` 下的文件名。
+- `--output-root` 会导出到 `<root>/logs/<run-name>`、`<root>/models/<run-name>`、`<root>/tensorboard`。
+- `--run-dir` 可以指定单次运行的完整目录，默认子目录是 `logs/`、`models/`、`tensorboard/`。
+- `--num-envs > 1` 时会启用 SB3 vectorized env；`--vec-env subproc` 使用多进程采样，通常比单环境更适合 MuJoCo 这类 CPU 仿真瓶颈。
+- 并行环境下，脚本会把 `eval_freq` 和 `save_freq` 按 `num_envs` 折算，仍按总环境步数理解。
 
 训练产物：
 
@@ -145,6 +213,36 @@ conda run -n gymnas-rl tensorboard --logdir runs/tensorboard
 
 ## 策略测试和可视化
 
+如果训练命令是：
+
+```bash
+python scripts/shadowhand_train_ppo_isaac_shaped.py \
+  --config block_rotatez_ppo_isaac_shaped_parallel.json \
+  --output-root /mnt/ssd/Bennkyou/PROJECT/data_PRO/runs/Gymnasium-Robotics/shadowhand
+```
+
+打开 MuJoCo human viewer 查看最终模型：
+
+```bash
+python scripts/shadowhand_play_ppo_isaac_shaped.py \
+  --model-path /mnt/ssd/Bennkyou/PROJECT/data_PRO/runs/Gymnasium-Robotics/shadowhand/models/block_rotatez_ppo_isaac_shaped_parallel/final_model.zip \
+  --episodes 16 \
+  --human \
+  --device cuda
+```
+
+查看评估最优模型时只需要替换模型路径：
+
+```bash
+python scripts/shadowhand_play_ppo_isaac_shaped.py \
+  --model-path /mnt/ssd/Bennkyou/PROJECT/data_PRO/runs/Gymnasium-Robotics/shadowhand/models/block_rotatez_ppo_isaac_shaped_parallel/best_model.zip \
+  --episodes 16 \
+  --human \
+  --device cuda
+```
+
+`shadowhand_play_ppo_isaac_shaped.py` 会自动读取模型目录下的 `config.json`，识别 `algo=ppo`、`env_id=HandManipulateBlockRotateZ-v1`、`reward_mode=isaac` 和环境参数；如果模型目录有 `vecnormalize.pkl`，也会自动加载 observation normalization 统计量。如果模型目录没有 `config.json`，需要手动加 `--algo ppo --env-id HandManipulateBlockRotateZ-v1`。
+
 离屏录制 gif：
 
 ```bash
@@ -159,12 +257,12 @@ conda run -n gymnas-rl python scripts/shadowhand_play.py \
 打开 MuJoCo human viewer：
 
 ```bash
-conda run -n gymnas-rl python scripts/shadowhand_play.py \
+python scripts/shadowhand_play.py \
   --env-id HandManipulateBlockRotateZ-v1 \
-  --model-path runs/models/block_rotatez_sac_her_4m_bs1024_her8/final_model.zip \
   --episodes 16 \
   --human \
-  --device cuda
+  --device cuda \
+  --model-path runs/models/block_rotatez_sac_her_4m_bs1024_her8/final_model.zip \
 ```
 
 ## 对接 dexonomy 抓取状态的下一步
@@ -177,3 +275,5 @@ Gymnasium-Robotics 现成 ShadowHand 环境的初始状态可以通过 `initial_
 - 把 `desired_goal` 扩展为 `目标物体位姿 + 目标接触特征`。
 - 改写 `compute_reward()`：`pose_reward + contact_reward + object_stability_penalty`。
 - 先在 `RotateZ`/固定目标上调通，再扩展到完整位姿和真实抓取状态库。
+
+gymnasiu-robo 中的 ppo 环境不适用于训练手内重定位任务
